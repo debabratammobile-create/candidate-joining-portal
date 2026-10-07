@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
+import { DOORBLY_LOGO_URL } from '../data/positions.ts';
 import { Lock, ArrowLeft, AlertCircle } from 'lucide-react';
 
 interface AdminLoginProps {
@@ -16,6 +17,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
   const [password, setPassword] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [logoError, setLogoError] = useState<boolean>(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,12 +44,32 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
           <ArrowLeft className="w-4 h-4 shrink-0" />
           <span className="truncate">Return to Applicant Portal</span>
         </button>
-        <div className="text-xs sm:text-sm font-bold tracking-tight text-white shrink-0">
-          DOORBLY ADMIN
+        <div className="flex items-center gap-2 text-xs sm:text-sm font-bold tracking-tight text-white shrink-0">
+          {!logoError && (
+            <img
+              src={DOORBLY_LOGO_URL}
+              alt="Doorbly Logo"
+              referrerPolicy="no-referrer"
+              onError={() => setLogoError(true)}
+              className="h-7 w-auto object-contain rounded bg-white p-0.5"
+            />
+          )}
+          <span>DOORBLY ADMIN</span>
         </div>
       </div>
 
       <div className="max-w-md w-full mx-auto bg-white text-slate-900 rounded-xl border border-slate-200 p-5 sm:p-8 my-6 sm:my-auto shadow-xl">
+        {!logoError && (
+          <div className="mb-4 flex items-center gap-2.5">
+            <img
+              src={DOORBLY_LOGO_URL}
+              alt="Doorbly Logo"
+              referrerPolicy="no-referrer"
+              onError={() => setLogoError(true)}
+              className="h-10 w-auto object-contain"
+            />
+          </div>
+        )}
         <div className="flex items-center gap-2 text-teal-700 mb-3">
           <Lock className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
           <span className="text-[11px] sm:text-xs font-mono font-semibold uppercase tracking-wider">

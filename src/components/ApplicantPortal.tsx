@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { DOORBLY_POSITIONS, JobPosition } from '../data/positions.ts';
+import { DOORBLY_POSITIONS, DOORBLY_LOGO_URL, JobPosition } from '../data/positions.ts';
 import { supabase, isSupabaseConfigured, KYC_STORAGE_BUCKET } from '../lib/supabase.ts';
 import heroDoorblyTeam from '../assets/images/hero_doorbly_team_1791344196731.jpg';
 import {
@@ -123,6 +123,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
   const [submittedAppNumber, setSubmittedAppNumber] = useState<string>('');
   const [copiedId, setCopiedId] = useState<boolean>(false);
   const [heroImgError, setHeroImgError] = useState<boolean>(false);
+  const [logoImgError, setLogoImgError] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   const positionsSectionRef = useRef<HTMLElement | null>(null);
@@ -488,7 +489,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
       {/* Top Bar Contract: Zone 1 Brand | Zone 2 Nav Links | Zone 3 Primary Action */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 px-4 sm:px-6 lg:px-8 h-14 flex items-center">
         <div className="max-w-7xl w-full mx-auto flex items-center justify-between gap-2">
-          {/* Zone 1: Single text element wordmark */}
+          {/* Zone 1: Company Logo + Brand */}
           <button
             type="button"
             onClick={() => {
@@ -496,9 +497,18 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
               setMobileMenuOpen(false);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 cursor-pointer shrink-0 py-1"
+            className="flex items-center gap-2.5 text-lg sm:text-xl font-bold tracking-tight text-slate-900 cursor-pointer shrink-0 py-1"
           >
-            DOORBLY
+            {!logoImgError && (
+              <img
+                src={DOORBLY_LOGO_URL}
+                alt="Doorbly Logo"
+                referrerPolicy="no-referrer"
+                onError={() => setLogoImgError(true)}
+                className="h-8 sm:h-9 w-auto object-contain"
+              />
+            )}
+            <span>DOORBLY</span>
           </button>
 
           {/* Zone 2: 4 clean text navigation links */}
@@ -2123,8 +2133,19 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
       {/* Quiet Corporate Footer */}
       <footer className="bg-white border-t border-slate-200 py-6 sm:py-8 px-4 sm:px-6 lg:px-8 mt-auto">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 text-center sm:text-left">
-          <div>
-            <span className="font-bold text-slate-900">DOORBLY</span> · Recruitment &amp; Employee Joining Portal
+          <div className="flex items-center justify-center sm:justify-start gap-2.5">
+            {!logoImgError && (
+              <img
+                src={DOORBLY_LOGO_URL}
+                alt="Doorbly Logo"
+                referrerPolicy="no-referrer"
+                onError={() => setLogoImgError(true)}
+                className="h-6 w-auto object-contain"
+              />
+            )}
+            <span>
+              <strong className="font-bold text-slate-900">DOORBLY</strong> · Recruitment &amp; Employee Joining Portal
+            </span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6">
             <button

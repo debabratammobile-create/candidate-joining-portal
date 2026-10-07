@@ -1,3 +1,6 @@
+export const DOORBLY_LOGO_URL =
+  'https://hwphupgoebrzospurhzr.supabase.co/storage/v1/object/sign/logo/logo%20(2).png?token=eyJraWQiOiJiYmY1YjI5Zi1kMWY5LTQzOWMtODJhNC02MGZmNGQ5ZjMxN2QiLCJhbGciOiJIUzUxMiJ9.eyJ1cmwiOiJsb2dvL2xvZ28gKDIpLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3OTEzNTMxNzMsImV4cCI6MTgyMjg4OTE3M30.5LtCPSR1bHVA_pdnGxRvRKAdzNY5mGgEznsNAeUHfcriFWuRFxDLnXDrvIW1Gx8XPNdI_d8f2eRY_plefSb8Vw';
+
 export interface JobPosition {
   id: string;
   title: string;

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
 import {
   DOORBLY_POSITIONS,
+  DOORBLY_LOGO_URL,
   REJECTION_REASONS,
   APPLICATION_STATUS_CONFIG,
   KYC_STATUS_CONFIG,
@@ -102,6 +103,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   // Active workspace view: 'spreadsheet' | 'roles'
   const [activeNav, setActiveNav] = useState<'spreadsheet' | 'roles'>('spreadsheet');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
+  const [logoError, setLogoError] = useState<boolean>(false);
 
   // Applications list state
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
@@ -550,12 +552,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
           >
             <div>
               <div className="px-4 py-4 border-b border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-bold tracking-tight text-white">
-                    DOORBLY ADMIN
-                  </div>
-                  <div className="text-[11px] font-mono text-teal-400">
-                    {admin?.role || 'ADMIN'}
+                <div className="flex items-center gap-2.5">
+                  {!logoError && (
+                    <img
+                      src={DOORBLY_LOGO_URL}
+                      alt="Doorbly Logo"
+                      referrerPolicy="no-referrer"
+                      onError={() => setLogoError(true)}
+                      className="h-7 w-auto object-contain rounded bg-white p-0.5 shrink-0"
+                    />
+                  )}
+                  <div>
+                    <div className="text-sm font-bold tracking-tight text-white">
+                      DOORBLY ADMIN
+                    </div>
+                    <div className="text-[11px] font-mono text-teal-400">
+                      {admin?.role || 'ADMIN'}
+                    </div>
                   </div>
                 </div>
                 <button
@@ -638,11 +651,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
       {/* Left Workspace Sidebar (Desktop lg+) */}
       <aside className="w-60 bg-slate-900 text-slate-200 flex-col justify-between shrink-0 hidden lg:flex">
         <div>
-          <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-            <span className="text-base font-bold tracking-tight text-white">
-              DOORBLY ADMIN
-            </span>
-            <span className="text-xs font-mono text-teal-400">
+          <div className="px-4 py-4 border-b border-slate-800 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              {!logoError && (
+                <img
+                  src={DOORBLY_LOGO_URL}
+                  alt="Doorbly Logo"
+                  referrerPolicy="no-referrer"
+                  onError={() => setLogoError(true)}
+                  className="h-7 w-auto object-contain rounded bg-white p-0.5 shrink-0"
+                />
+              )}
+              <span className="text-sm font-bold tracking-tight text-white truncate">
+                DOORBLY ADMIN
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-teal-400 shrink-0">
               {admin?.role || 'ADMIN'}
             </span>
           </div>
@@ -717,6 +741,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
             >
               <Menu className="w-5 h-5" />
             </button>
+            {!logoError && (
+              <img
+                src={DOORBLY_LOGO_URL}
+                alt="Doorbly Logo"
+                referrerPolicy="no-referrer"
+                onError={() => setLogoError(true)}
+                className="h-6 w-auto object-contain shrink-0 lg:hidden"
+              />
+            )}
             <span className="font-bold text-slate-900 truncate">Doorbly Console</span>
             <span className="hidden sm:inline">/</span>
             <span className="hidden sm:inline font-medium text-slate-800 truncate">
