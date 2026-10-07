@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { DOORBLY_POSITIONS, DOORBLY_LOGO_URL, JobPosition } from '../data/positions.ts';
 import { supabase, isSupabaseConfigured, KYC_STORAGE_BUCKET } from '../lib/supabase.ts';
+import { apiCheckDuplicate, apiSubmitApplication } from '../lib/recruitmentApi.ts';
 import heroDoorblyTeam from '../assets/images/hero_doorbly_team_1791344196731.jpg';
 import {
   ArrowRight,
@@ -105,10 +106,34 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
   const [viewMode, setViewMode] = useState<'landing' | 'responsibilities' | 'form' | 'submitted'>('landing');
   const [selectedPosition, setSelectedPosition] = useState<JobPosition>(DOORBLY_POSITIONS[0]);
   const [currentStep, setCurrentStep] = useState<number>(1);
-  const [formData, setFormData] = useState<ApplicationFormState>({
-    ...INITIAL_FORM_STATE,
-    appliedPosition: DOORBLY_POSITIONS[0].title,
+  const [formData, setFormData] = useState<ApplicationFormState>(() => {
+    try {
+      const savedDraft = sessionStorage.getItem('doorbly_applicant_form_draft');
+      if (savedDraft) {
+        const parsed = JSON.parse(savedDraft);
+        return {
+          ...INITIAL_FORM_STATE,
+          ...parsed,
+          appliedPosition: parsed.appliedPosition || DOORBLY_POSITIONS[0].title,
+        };
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return {
+      ...INITIAL_FORM_STATE,
+      appliedPosition: DOORBLY_POSITIONS[0].title,
+    };
   });
+
+  // Auto-save form progress in sessionStorage so applicants don't lose work on accidental refresh
+  React.useEffect(() => {
+    try {
+      sessionStorage.setItem('doorbly_applicant_form_draft', JSON.stringify(formData));
+    } catch {
+      // ignore storage errors
+    }
+  }, [formData]);
 
   // KYC Document files
   const [aadhaarFront, setAadhaarFront] = useState<UploadedKycFile | null>(null);
@@ -342,19 +367,14 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
     // On Step 2 completion, check duplicate application protection (#28)
     if (currentStep === 2) {
       try {
-        const dupRes = await fetch('/api/applications/check-duplicate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mobile: formData.mobile.trim(),
-            email: formData.email.trim(),
-            appliedPosition: formData.appliedPosition,
-          }),
-        });
-        if (dupRes.status === 409) {
-          const dupData = await dupRes.json();
+        const dupResult = await apiCheckDuplicate(
+          formData.mobile.trim(),
+          formData.email.trim(),
+          formData.appliedPosition
+        );
+        if (dupResult.duplicate) {
           setFormError(
-            dupData.message ||
+            dupResult.message ||
               'An application already exists with these details. Please contact Doorbly recruitment support if you need to update your application.'
           );
           return;
@@ -422,25 +442,17 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
         setUploadProgress(35 + Math.round(((i + 1) / allKycDocs.length) * 40));
       }
 
-      const response = await fetch('/api/applications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          documents: preparedDocs,
-        }),
+      const data = await apiSubmitApplication({
+        ...formData,
+        documents: preparedDocs,
       });
 
-      setUploadProgress(95);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.error || 'Failed to submit application. Please review your details and try again.'
-        );
-      }
-
       setUploadProgress(100);
+      try {
+        sessionStorage.removeItem('doorbly_applicant_form_draft');
+      } catch {
+        // ignore
+      }
       setSubmittedAppNumber(data.applicationNumber);
       setViewMode('submitted');
       window.scrollTo({ top: 0, behavior: 'smooth' });

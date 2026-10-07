@@ -1,4 +1,7 @@
--- =============================================================================
+// Complete Supabase PostgreSQL Schema, RLS Policies, Storage Bucket, and Authorized Admin Seed
+// Ready to paste and run directly in Supabase Dashboard -> SQL Editor
+
+export const SUPABASE_PRODUCTION_SQL = `-- =============================================================================
 -- DOORBLY — RECRUITMENT & EMPLOYEE JOINING PORTAL
 -- Complete Supabase PostgreSQL Schema, RLS Policies & Storage Bucket Setup
 -- Project: https://ygeggtwqsphluwfegqjl.supabase.co
@@ -47,7 +50,7 @@ CREATE TABLE IF NOT EXISTS public.job_applications (
   gender TEXT NOT NULL,
   mobile TEXT NOT NULL CHECK (mobile ~ '^[6-9][0-9]{9}$'),
   alternate_mobile TEXT CHECK (alternate_mobile IS NULL OR alternate_mobile = '' OR alternate_mobile ~ '^[6-9][0-9]{9}$'),
-  email TEXT CHECK (email IS NULL OR email = '' OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
+  email TEXT CHECK (email IS NULL OR email = '' OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'),
   address TEXT NOT NULL,
   district TEXT NOT NULL,
   state TEXT NOT NULL,
@@ -220,3 +223,4 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.candidate_documents;
   END IF;
 END $$;
+`;

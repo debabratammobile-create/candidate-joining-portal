@@ -8,6 +8,17 @@ import {
   KYC_STATUS_CONFIG,
 } from '../data/positions.ts';
 import { supabase, isSupabaseConfigured, KYC_STORAGE_BUCKET } from '../lib/supabase.ts';
+import { SUPABASE_PRODUCTION_SQL } from '../data/supabaseSql.ts';
+import {
+  apiListApplications,
+  apiGetApplicationDetails,
+  apiUpdateApplicationStatus,
+  apiVerifyDocument,
+  apiViewDocument,
+  apiBulkUpdateStatus,
+  apiListAdminUsers,
+  apiUpdateAdminUser,
+} from '../lib/recruitmentApi.ts';
 import {
   Search,
   Download,
@@ -24,6 +35,8 @@ import {
   ShieldCheck,
   RefreshCw,
   Menu,
+  Database,
+  Copy,
 } from 'lucide-react';
 
 export interface CandidateDocumentItem {
@@ -100,10 +113,11 @@ interface AdminDashboardProps {
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToApply }) => {
   const { admin, token, logout } = useAuth();
 
-  // Active workspace view: 'spreadsheet' | 'roles'
-  const [activeNav, setActiveNav] = useState<'spreadsheet' | 'roles'>('spreadsheet');
+  // Active workspace view: 'spreadsheet' | 'roles' | 'sql'
+  const [activeNav, setActiveNav] = useState<'spreadsheet' | 'roles' | 'sql'>('spreadsheet');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
   const [logoError, setLogoError] = useState<boolean>(false);
+  const [sqlCopied, setSqlCopied] = useState<boolean>(false);
 
   // Applications list state
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
@@ -170,13 +184,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
       if (!token) return;
       if (!silent) setLoading(true);
       try {
-        const res = await fetch('/api/admin/applications', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setApplications(data.applications || []);
-        }
+        const list = await apiListApplications(token);
+        setApplications(list || []);
       } catch (err) {
         console.error('Error loading applications:', err);
       } finally {
@@ -189,13 +198,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   const fetchAdminUsers = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/admin/users', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAdminUsersList(data.users || []);
-      }
+      const users = await apiListAdminUsers(token);
+      setAdminUsersList(users || []);
     } catch (e) {
       console.error('Error fetching admin users:', e);
     }
@@ -238,13 +242,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
     if (!token) return;
     setLoadingDetails(true);
     try {
-      const res = await fetch(`/api/admin/applications/${appId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActiveApplicant(data.application);
-        setRemarkDraft(data.application.adminRemarks || '');
+      const details = await apiGetApplicationDetails(appId, token);
+      if (details) {
+        setActiveApplicant(details);
+        setRemarkDraft(details.adminRemarks || '');
       }
     } catch (e) {
       console.error('Error fetching applicant details:', e);
@@ -357,20 +358,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   ) => {
     if (!token) return;
     try {
-      const res = await fetch(`/api/admin/applications/${appId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          status: newStatus,
-          rejectionReason,
-          adminRemarks,
-          performedBy: `${admin?.name || 'Admin'} (${admin?.role || 'ADMIN'})`,
-        }),
+      const ok = await apiUpdateApplicationStatus(appId, token, {
+        status: newStatus,
+        rejectionReason,
+        adminRemarks,
+        performedBy: `${admin?.name || 'Admin'} (${admin?.role || 'ADMIN'})`,
       });
-      if (res.ok) {
+      if (ok) {
         showToast(
           newStatus
             ? `Application status updated to ${newStatus}`
@@ -394,19 +388,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   ) => {
     if (!token || !activeApplicant) return;
     try {
-      const res = await fetch(`/api/admin/documents/${docId}/verify`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          verificationStatus,
-          remarks,
-          performedBy: `${admin?.name || 'Admin'} (${admin?.role || 'ADMIN'})`,
-        }),
+      const ok = await apiVerifyDocument(docId, activeApplicant.id, token, {
+        verificationStatus,
+        remarks,
+        performedBy: `${admin?.name || 'Admin'} (${admin?.role || 'ADMIN'})`,
       });
-      if (res.ok) {
+      if (ok) {
         showToast(`Document marked as ${verificationStatus}`);
         setRejectingDocId(null);
         await fetchApplications(true);
@@ -421,30 +408,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   const handleSecureViewDocument = async (doc: CandidateDocumentItem) => {
     if (!token) return;
     try {
-      // If external Supabase Storage is configured, try generating a 60-second signed URL first
-      if (isSupabaseConfigured && supabase) {
-        const cleanPath = doc.storagePath.replace(/^candidate-kyc\//, '');
-        const { data } = await supabase.storage
-          .from(KYC_STORAGE_BUCKET)
-          .createSignedUrl(cleanPath, 60);
-        if (data?.signedUrl) {
-          setViewingDocument({
-            fileName: doc.fileName,
-            documentType: doc.documentType,
-            storagePath: doc.storagePath,
-            signedDataUrl: data.signedUrl,
-            expiresInSeconds: 60,
-          });
-          return;
-        }
-      }
-
-      const res = await fetch(`/api/admin/documents/${doc.id}/view`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setViewingDocument(data);
+      const docView = await apiViewDocument(doc, token);
+      if (docView) {
+        setViewingDocument(docView);
       }
     } catch (e) {
       console.error('Error loading private KYC document:', e);
@@ -455,20 +421,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   const handleBulkStatus = async (status: 'SHORTLISTED' | 'REJECTED', reason?: string) => {
     if (!token || selectedIds.length === 0) return;
     try {
-      const res = await fetch('/api/admin/applications/bulk-status', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          applicationIds: selectedIds,
-          status,
-          rejectionReason: reason,
-          performedBy: `${admin?.name || 'Admin'} (${admin?.role || 'ADMIN'})`,
-        }),
-      });
-      if (res.ok) {
+      const ok = await apiBulkUpdateStatus(
+        selectedIds,
+        status,
+        reason,
+        `${admin?.name || 'Admin'} (${admin?.role || 'ADMIN'})`,
+        token
+      );
+      if (ok) {
         showToast(
           `Updated ${selectedIds.length} application(s) to ${status}`
         );
@@ -612,6 +572,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
                   <Users className="w-4 h-4 shrink-0" />
                   <span>Admin Roles &amp; Access</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveNav('sql');
+                    setMobileSidebarOpen(false);
+                  }}
+                  className={`w-full px-3 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer ${
+                    activeNav === 'sql'
+                      ? 'bg-teal-700 text-white'
+                      : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <Database className="w-4 h-4 shrink-0" />
+                  <span>Supabase SQL</span>
+                </button>
               </div>
             </div>
 
@@ -697,6 +673,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
               <Users className="w-4 h-4" />
               <span>Admin Roles &amp; Access</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveNav('sql')}
+              className={`w-full px-3 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer ${
+                activeNav === 'sql'
+                  ? 'bg-teal-700 text-white'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              <span>Supabase SQL</span>
+            </button>
           </div>
         </div>
 
@@ -755,11 +744,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
             <span className="hidden sm:inline font-medium text-slate-800 truncate">
               {activeNav === 'spreadsheet'
                 ? 'Applicant Spreadsheet'
-                : 'Admin User Roles & Permissions'}
+                : activeNav === 'roles'
+                ? 'Admin User Roles & Permissions'
+                : 'Supabase SQL Schema & RLS Setup'}
             </span>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2.5">
+            <button
+              type="button"
+              onClick={() => setActiveNav('sql')}
+              className={`px-2.5 sm:px-3 py-1.5 text-xs font-medium border rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                activeNav === 'sql'
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'text-slate-700 hover:bg-slate-100 border-slate-300'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5 text-teal-600" />
+              <span>Supabase SQL</span>
+            </button>
+
             <button
               type="button"
               onClick={() => fetchApplications(false)}
@@ -1298,7 +1302,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
               </div>
             </div>
           </main>
-        ) : (
+        ) : activeNav === 'roles' ? (
           /* ADMIN USER ROLES MANAGEMENT VIEW (#25) */
           <main className="p-3 sm:p-6 space-y-6 flex-1 overflow-y-auto">
             <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6">
@@ -1330,17 +1334,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
                             value={u.role}
                             onChange={async (e) => {
                               if (!token) return;
-                              await fetch(`/api/admin/users/${u.id}`, {
-                                method: 'PATCH',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  Authorization: `Bearer ${token}`,
-                                },
-                                body: JSON.stringify({
-                                  role: e.target.value,
-                                  active: u.active,
-                                }),
-                              });
+                              await apiUpdateAdminUser(u.id, e.target.value, u.active, token);
                               fetchAdminUsers();
                               showToast(`Updated role for ${u.name}`);
                             }}
@@ -1365,6 +1359,94 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </main>
+        ) : (
+          /* SUPABASE SQL SCHEMA & RLS VIEW */
+          <main className="p-3 sm:p-6 space-y-4 sm:space-y-6 flex-1 overflow-y-auto">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Database className="w-5 h-5 text-teal-700 shrink-0" />
+                    <span>Supabase SQL Schema, RLS Policies &amp; Storage Setup</span>
+                  </h2>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Copy and run this complete SQL script in your Supabase project (
+                    <span className="font-mono font-semibold text-slate-800">
+                      https://ygeggtwqsphluwfegqjl.supabase.co
+                    </span>{' '}
+                    → <strong>SQL Editor</strong> → <strong>New Query</strong>) to create all tables,
+                    indexes, Row-Level Security policies, and the{' '}
+                    <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">candidate-kyc</code>{' '}
+                    storage bucket.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(SUPABASE_PRODUCTION_SQL);
+                      setSqlCopied(true);
+                      showToast('Supabase SQL script copied to clipboard');
+                      setTimeout(() => setSqlCopied(false), 2500);
+                    }}
+                    className="px-4 py-2.5 bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    {sqlCopied ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Copied SQL Script</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>Copy Full SQL Script</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="font-mono font-bold text-slate-900">1. public.admin_users</div>
+                  <p className="text-slate-600 mt-1">
+                    Stores authorized administrator accounts and seeds{' '}
+                    <span className="font-mono text-teal-800">debabrata.tribune@gmail.com</span>.
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="font-mono font-bold text-slate-900">2. public.job_applications</div>
+                  <p className="text-slate-600 mt-1">
+                    Stores all candidate details, applied positions, districts, and recruitment status.
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="font-mono font-bold text-slate-900">3. public.candidate_documents</div>
+                  <p className="text-slate-600 mt-1">
+                    Stores KYC metadata &amp; verification status for Aadhaar, Education, Bank, Resume &amp; Photo.
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="font-mono font-bold text-slate-900">4. Storage &amp; Audit Logs</div>
+                  <p className="text-slate-600 mt-1">
+                    Configures <span className="font-mono">application_activity_logs</span> and the{' '}
+                    <span className="font-mono">candidate-kyc</span> bucket (5 MB limit).
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+                <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 font-mono">
+                  <span>supabase/schema.sql</span>
+                  <span>PostgreSQL + RLS + Storage + Realtime</span>
+                </div>
+                <pre className="p-4 text-xs font-mono text-slate-100 overflow-x-auto max-h-[60dvh] leading-relaxed select-all">
+                  <code>{SUPABASE_PRODUCTION_SQL}</code>
+                </pre>
               </div>
             </div>
           </main>

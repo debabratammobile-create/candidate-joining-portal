@@ -20,8 +20,13 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Allow up to 35MB JSON bodies for multi-document KYC base64/dataURL uploads
-  app.use(express.json({ limit: '35mb' }));
+  // Allow up to 50MB JSON & URL-encoded bodies for multi-document KYC base64/dataURL uploads
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
 
   const ensureSeeded = async () => {
     // No mock or sample data seeding

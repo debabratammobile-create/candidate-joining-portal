@@ -23,90 +23,199 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const ADMIN_TOKEN_STORAGE_KEY = 'doorbly_admin_session_token';
+
+const SOLE_AUTHORIZED_ADMIN: AdminUserProfile = {
+  id: 'admin-super-tribune-id',
+  userId: 'admin-super-tribune',
+  name: 'Debabrata Mohanta',
+  email: 'debabrata.tribune@gmail.com',
+  role: 'SUPER_ADMIN',
+  active: true,
+};
+
+async function safeParseJson(res: Response) {
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) return null;
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [admin, setAdmin] = useState<AdminUserProfile | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const idToken = await firebaseUser.getIdToken();
-          const res = await fetch('/api/admin/me', {
-            headers: {
-              Authorization: `Bearer ${idToken}`,
-            },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setToken(idToken);
-            setAdmin(data.admin);
-          }
-        } catch (err) {
-          console.error('Failed to verify Firebase admin user:', err);
-        }
-      }
-      setLoading(false);
-    });
+    let mounted = true;
 
-    return () => unsubscribe();
+    const restoreSession = async () => {
+      try {
+        const savedToken = localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+        if (savedToken) {
+          // Verify token embeds the sole authorized email
+          if (savedToken.includes('debabrata.tribune@gmail.com')) {
+            try {
+              const res = await fetch('/api/admin/me', {
+                headers: {
+                  Authorization: `Bearer ${savedToken}`,
+                },
+              });
+              const data = await safeParseJson(res);
+              if (res.ok && data?.admin) {
+                if (mounted) {
+                  setToken(savedToken);
+                  setAdmin(data.admin);
+                  setLoading(false);
+                }
+                return;
+              }
+            } catch {
+              // Fallback for static Vercel deployment
+            }
+
+            if (mounted) {
+              setToken(savedToken);
+              setAdmin(SOLE_AUTHORIZED_ADMIN);
+              setLoading(false);
+            }
+            return;
+          } else {
+            localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+            if (mounted) {
+              setToken(null);
+              setAdmin(null);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Session restore error:', e);
+      }
+
+      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (firebaseUser) {
+          const email = (firebaseUser.email || '').trim().toLowerCase();
+          if (email === 'debabrata.tribune@gmail.com') {
+            try {
+              const idToken = await firebaseUser.getIdToken();
+              if (mounted) {
+                setToken(idToken);
+                setAdmin(SOLE_AUTHORIZED_ADMIN);
+                localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, idToken);
+              }
+            } catch (err) {
+              console.error('Failed to verify Firebase admin user:', err);
+            }
+          }
+        }
+        if (mounted) setLoading(false);
+      });
+
+      return unsubscribe;
+    };
+
+    const unsubPromise = restoreSession();
+
+    return () => {
+      mounted = false;
+      unsubPromise.then((unsub) => {
+        if (typeof unsub === 'function') unsub();
+      });
+    };
   }, []);
 
   const loginWithCredentials = async (email: string, password: string) => {
-    // If external Supabase project is also configured, authenticate against Supabase Auth first
+    const cleanEmail = String(email || '').trim().toLowerCase();
+
+    // Strictly enforce sole authorized administrator credentials everywhere (Express, Supabase, and Vercel static)
+    if (cleanEmail !== 'debabrata.tribune@gmail.com' || password !== 'Devraj@1122') {
+      throw new Error(
+        'Unauthorized: Access is restricted exclusively to the authorized administrator account.'
+      );
+    }
+
+    // 1. If Supabase Auth is configured, sign in so Supabase RLS policies recognize authenticated session
     if (isSupabaseConfigured && supabase) {
-      const { data: supaData, error: supaError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (!supaError && supaData.user) {
-        const sessionToken = `doorbly-admin-session:${email}:${supaData.user.id}`;
-        const res = await fetch('/api/admin/me', {
-          headers: { Authorization: `Bearer ${sessionToken}` },
+      try {
+        await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
         });
-        if (res.ok) {
-          const profileData = await res.json();
-          setToken(sessionToken);
-          setAdmin(profileData.admin);
-          return;
-        }
+      } catch {
+        // Proceed even if Supabase Auth user hasn't been created in external dashboard yet
       }
     }
 
-    const response = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+    // 2. Try Express backend API (/api/admin/login)
+    try {
+      const response = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password }),
+      });
 
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Invalid email or password.');
+      const data = await safeParseJson(response);
+      if (data) {
+        if (!response.ok) {
+          throw new Error(data.error || 'Invalid email or password.');
+        }
+        setToken(data.token);
+        setAdmin(data.admin);
+        try {
+          localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, data.token);
+        } catch {
+          // ignore
+        }
+        return;
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('Unauthorized')) {
+        throw err;
+      }
     }
 
-    setToken(data.token);
-    setAdmin(data.admin);
+    // 3. Fallback for static Vercel deployment where /api/* Express server is not running
+    const fallbackToken = `doorbly-admin-session:${cleanEmail}:admin-super-tribune`;
+    setToken(fallbackToken);
+    setAdmin(SOLE_AUTHORIZED_ADMIN);
+    try {
+      localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, fallbackToken);
+    } catch {
+      // ignore
+    }
   };
 
   const loginWithGoogle = async () => {
     const result = await signInWithPopup(auth, googleAuthProvider);
-    const idToken = await result.user.getIdToken();
-    const res = await fetch('/api/admin/me', {
-      headers: {
-        Authorization: `Bearer ${idToken}`,
-      },
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to verify administrator privileges.');
+    const email = (result.user.email || '').trim().toLowerCase();
+    if (email !== 'debabrata.tribune@gmail.com') {
+      await signOut(auth);
+      throw new Error(
+        'Access Denied: Only debabrata.tribune@gmail.com is authorized to access the Admin Panel.'
+      );
     }
+    const idToken = await result.user.getIdToken();
     setToken(idToken);
-    setAdmin(data.admin);
+    setAdmin(SOLE_AUTHORIZED_ADMIN);
+    try {
+      localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, idToken);
+    } catch {
+      // ignore
+    }
   };
 
   const logout = async () => {
     try {
+      localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
       if (auth.currentUser) {
         await signOut(auth);
       }

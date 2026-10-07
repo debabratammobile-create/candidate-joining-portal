@@ -8,23 +8,42 @@ function RouterContent() {
   const { admin, token, loading } = useAuth();
   const [route, setRoute] = useState<string>(() => {
     const path = window.location.pathname;
-    if (path.startsWith('/admin')) return path;
+    const hash = window.location.hash.replace(/^#/, '');
+    if (hash.startsWith('/admin') || path.startsWith('/admin')) return '/admin/dashboard';
     return '/apply';
   });
 
   const navigate = (newPath: string) => {
-    window.history.pushState({}, '', newPath);
     setRoute(newPath);
+    // Keep URL root `/` with hash `#/apply` or `#/admin` on static hosts so browser refresh never triggers a 404 even before vercel.json is pushed
+    try {
+      if (window.location.hostname.includes('vercel.app')) {
+        window.history.pushState({}, '', `/#${newPath}`);
+      } else {
+        window.history.pushState({}, '', newPath);
+      }
+    } catch {
+      // ignore history errors
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   useEffect(() => {
-    const handlePopState = () => {
+    const syncRoute = () => {
       const path = window.location.pathname;
-      setRoute(path === '/' ? '/apply' : path);
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash.startsWith('/admin') || path.startsWith('/admin')) {
+        setRoute('/admin/dashboard');
+      } else {
+        setRoute('/apply');
+      }
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', syncRoute);
+    window.addEventListener('hashchange', syncRoute);
+    return () => {
+      window.removeEventListener('popstate', syncRoute);
+      window.removeEventListener('hashchange', syncRoute);
+    };
   }, []);
 
   if (loading) {
