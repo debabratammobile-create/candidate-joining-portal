@@ -1,0 +1,6 @@
+{
+  "name": "Doorbly — Recruitment & Employee Joining Portal",
+  "description": "Official recruitment, candidate KYC verification, and employee onboarding portal for Doorbly district operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
