@@ -197,7 +197,14 @@ export async function apiSubmitApplication(payload: any): Promise<{
   status: string;
   createdAt: string;
 }> {
-  // Try backend Express API first
+  // Try backend Express API first AND sync to Supabase if configured
+  let backendResult: {
+    id: string;
+    applicationNumber: string;
+    status: string;
+    createdAt: string;
+  } | null = null;
+
   try {
     const res = await fetch('/api/applications', {
       method: 'POST',
@@ -211,7 +218,7 @@ export async function apiSubmitApplication(payload: any): Promise<{
           data.error || 'Failed to submit application. Please review your details and try again.'
         );
       }
-      return data;
+      backendResult = data;
     }
   } catch (err: any) {
     // If the backend explicitly returned a 400/409 validation error message, rethrow it
@@ -223,50 +230,54 @@ export async function apiSubmitApplication(payload: any): Promise<{
   const year = new Date().getFullYear();
   const localApps = getLocalApplications();
   const nextSeq = String(localApps.length + 1).padStart(6, '0');
-  const generatedAppNumber = `DB-${year}-${nextSeq}`;
+  const generatedAppNumber = backendResult?.applicationNumber || `DB-${year}-${nextSeq}`;
   const appId =
-    typeof crypto !== 'undefined' && crypto.randomUUID
+    backendResult?.id ||
+    (typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
-      : `app-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const nowIso = new Date().toISOString();
+      : `app-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const nowIso = backendResult?.createdAt || new Date().toISOString();
 
-  // Try direct Supabase PostgreSQL insert if configured
+  // Also sync to Supabase PostgreSQL if configured
   if (isSupabaseConfigured && supabase) {
     try {
       const { data: insertedApp, error: appErr } = await supabase
         .from('job_applications')
-        .insert({
-          id: appId,
-          application_number: generatedAppNumber,
-          full_name: payload.fullName.trim(),
-          parent_name: payload.parentName.trim(),
-          date_of_birth: payload.dateOfBirth,
-          gender: payload.gender,
-          mobile: payload.mobile.trim(),
-          alternate_mobile: payload.alternateMobile?.trim() || null,
-          email: payload.email?.trim().toLowerCase() || null,
-          address: payload.address.trim(),
-          district: payload.district.trim(),
-          state: payload.state.trim(),
-          pin_code: payload.pinCode.trim(),
-          applied_position: payload.appliedPosition,
-          preferred_location: payload.preferredLocation.trim(),
-          experience: payload.experience,
-          total_experience: payload.totalExperience.trim(),
-          previous_company: payload.previousCompany?.trim() || null,
-          previous_designation: payload.previousDesignation?.trim() || null,
-          expected_salary: payload.expectedSalary.trim(),
-          notice_period: payload.noticePeriod.trim(),
-          highest_qualification: payload.highestQualification.trim(),
-          institution: payload.institution.trim(),
-          passing_year: payload.passingYear.trim(),
-          additional_qualifications: payload.additionalQualifications?.trim() || null,
-          skills: payload.skills.trim(),
-          emergency_contact_name: payload.emergencyContactName.trim(),
-          emergency_contact_relationship: payload.emergencyContactRelationship.trim(),
-          emergency_contact_mobile: payload.emergencyContactMobile.trim(),
-          status: 'SUBMITTED',
-        })
+        .upsert(
+          {
+            id: appId,
+            application_number: generatedAppNumber,
+            full_name: payload.fullName.trim(),
+            parent_name: payload.parentName.trim(),
+            date_of_birth: payload.dateOfBirth,
+            gender: payload.gender,
+            mobile: payload.mobile.trim(),
+            alternate_mobile: payload.alternateMobile?.trim() || null,
+            email: payload.email?.trim().toLowerCase() || null,
+            address: payload.address.trim(),
+            district: payload.district.trim(),
+            state: payload.state.trim(),
+            pin_code: payload.pinCode.trim(),
+            applied_position: payload.appliedPosition,
+            preferred_location: payload.preferredLocation.trim(),
+            experience: payload.experience,
+            total_experience: payload.totalExperience.trim(),
+            previous_company: payload.previousCompany?.trim() || null,
+            previous_designation: payload.previousDesignation?.trim() || null,
+            expected_salary: payload.expectedSalary.trim(),
+            notice_period: payload.noticePeriod.trim(),
+            highest_qualification: payload.highestQualification.trim(),
+            institution: payload.institution.trim(),
+            passing_year: payload.passingYear.trim(),
+            additional_qualifications: payload.additionalQualifications?.trim() || null,
+            skills: payload.skills.trim(),
+            emergency_contact_name: payload.emergencyContactName.trim(),
+            emergency_contact_relationship: payload.emergencyContactRelationship.trim(),
+            emergency_contact_mobile: payload.emergencyContactMobile.trim(),
+            status: 'SUBMITTED',
+          },
+          { onConflict: 'application_number' }
+        )
         .select()
         .single();
 
@@ -281,6 +292,8 @@ export async function apiSubmitApplication(payload: any): Promise<{
               document_type: doc.documentType,
               file_name: doc.fileName,
               storage_path: doc.storagePath,
+              mime_type: doc.mimeType || 'application/octet-stream',
+              file_data: doc.fileDataUrl || null,
               verification_status: 'PENDING',
             }))
           );
@@ -295,16 +308,22 @@ export async function apiSubmitApplication(payload: any): Promise<{
           performed_by: 'Applicant (Self)',
         });
 
-        return {
-          id: finalAppId,
-          applicationNumber: finalAppNum,
-          status: 'SUBMITTED',
-          createdAt: nowIso,
-        };
+        if (!backendResult) {
+          return {
+            id: finalAppId,
+            applicationNumber: finalAppNum,
+            status: 'SUBMITTED',
+            createdAt: nowIso,
+          };
+        }
       }
     } catch (supaErr) {
       console.error('Supabase direct insert warning:', supaErr);
     }
+  }
+
+  if (backendResult) {
+    return backendResult;
   }
 
   // Fallback to persistent local storage so Vercel static deployments work seamlessly out-of-the-box
@@ -386,20 +405,32 @@ export async function apiSubmitApplication(payload: any): Promise<{
   };
 }
 
-// 3. List All Applications for Admin
+// 3. List All Applications for Admin (Merges Backend API + Supabase + LocalStorage with cache-busting)
 export async function apiListApplications(token: string): Promise<any[]> {
+  const mergedMap = new Map<string, any>();
+
+  // 1) Query Backend Express API (Cloud SQL) with cache-busting
   try {
-    const res = await fetch('/api/admin/applications', {
-      headers: { Authorization: `Bearer ${token}` },
+    const res = await fetch(`/api/admin/applications?t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
     });
     const data = await safeParseJson(res);
     if (res.ok && data && Array.isArray(data.applications)) {
-      return data.applications;
+      for (const app of data.applications) {
+        const key = app.applicationNumber || app.id;
+        if (key) mergedMap.set(key, app);
+      }
     }
   } catch {
-    // Fallback
+    // Continue to Supabase
   }
 
+  // 2) Query Supabase PostgreSQL directly so records submitted via Vercel/Supabase also appear immediately
   if (isSupabaseConfigured && supabase) {
     try {
       const { data: apps, error } = await supabase
@@ -416,24 +447,31 @@ export async function apiListApplications(token: string): Promise<any[]> {
           docsByApp.set(d.application_id, list);
         });
 
-        const supaRecords = apps.map((a: any) =>
-          mapSupabaseAppToRecord(a, docsByApp.get(a.id) || [])
-        );
-        const localApps = getLocalApplications();
-        const combined = [...supaRecords];
-        for (const loc of localApps) {
-          if (!combined.some((r) => r.applicationNumber === loc.applicationNumber)) {
-            combined.push(loc);
+        for (const a of apps) {
+          const mapped = mapSupabaseAppToRecord(a, docsByApp.get(a.id) || []);
+          const key = mapped.applicationNumber || mapped.id;
+          if (key && !mergedMap.has(key)) {
+            mergedMap.set(key, mapped);
           }
         }
-        return combined;
       }
     } catch {
-      // Fallback
+      // Continue to local fallback
     }
   }
 
-  return getLocalApplications();
+  // 3) Include any browser local fallback applications
+  const localApps = getLocalApplications();
+  for (const loc of localApps) {
+    const key = loc.applicationNumber || loc.id;
+    if (key && !mergedMap.has(key)) {
+      mergedMap.set(key, loc);
+    }
+  }
+
+  return Array.from(mergedMap.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 }
 
 // 4. Get Single Application Details for Admin

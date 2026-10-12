@@ -122,6 +122,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   // Applications list state
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Filters & Search (#14)
@@ -181,13 +182,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
 
   const fetchApplications = useCallback(
     async (silent = false) => {
-      if (!token) return;
       if (!silent) setLoading(true);
       try {
-        const list = await apiListApplications(token);
+        const list = await apiListApplications(token || '');
         setApplications(list || []);
+        return list || [];
       } catch (err) {
         console.error('Error loading applications:', err);
+        return [];
       } finally {
         if (!silent) setLoading(false);
       }
@@ -196,14 +198,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
   );
 
   const fetchAdminUsers = useCallback(async () => {
-    if (!token) return;
     try {
-      const users = await apiListAdminUsers(token);
+      const users = await apiListAdminUsers(token || '');
       setAdminUsersList(users || []);
     } catch (e) {
       console.error('Error fetching admin users:', e);
     }
   }, [token]);
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      const [list] = await Promise.all([
+        fetchApplications(false),
+        fetchAdminUsers(),
+      ]);
+      if (activeApplicant) {
+        const updatedDetails = await apiGetApplicationDetails(activeApplicant.id, token || '');
+        if (updatedDetails) {
+          setActiveApplicant(updatedDetails);
+        }
+      }
+      showToast(`Refreshed records (${list.length} application${list.length === 1 ? '' : 's'} loaded)`);
+    } catch {
+      showToast('Failed to refresh records. Please try again.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Initial load + Live data synchronization (#31)
   useEffect(() => {
@@ -766,11 +789,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
 
             <button
               type="button"
-              onClick={() => fetchApplications(false)}
-              className="px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 border border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              disabled={isRefreshing}
+              onClick={handleManualRefresh}
+              className="px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 border border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Refresh</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-teal-700' : ''}`} />
+              <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
             </button>
 
             <button
