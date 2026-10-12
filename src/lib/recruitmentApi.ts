@@ -229,8 +229,33 @@ export async function apiSubmitApplication(payload: any): Promise<{
 
   const year = new Date().getFullYear();
   const localApps = getLocalApplications();
-  const nextSeq = String(localApps.length + 1).padStart(6, '0');
-  const generatedAppNumber = backendResult?.applicationNumber || `DB-${year}-${nextSeq}`;
+
+  // Compute next unique Application Number from Supabase + LocalStorage so different applicants never collide on DB-2026-000001
+  let nextSeqNum = localApps.length + 1;
+  if (isSupabaseConfigured && supabase && !backendResult?.applicationNumber) {
+    try {
+      const { data: existingNums } = await supabase
+        .from('job_applications')
+        .select('application_number');
+      if (Array.isArray(existingNums) && existingNums.length > 0) {
+        let maxFound = 0;
+        for (const row of existingNums) {
+          const match = String(row.application_number || '').match(/(\d+)$/);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (!isNaN(num) && num > maxFound) maxFound = num;
+          }
+        }
+        nextSeqNum = Math.max(nextSeqNum, maxFound + 1, existingNums.length + 1);
+      }
+    } catch {
+      // Fallback to timestamp suffix if count query fails
+      nextSeqNum = Math.floor((Date.now() / 1000) % 900000) + 100000;
+    }
+  }
+
+  let generatedAppNumber =
+    backendResult?.applicationNumber || `DB-${year}-${String(nextSeqNum).padStart(6, '0')}`;
   const appId =
     backendResult?.id ||
     (typeof crypto !== 'undefined' && crypto.randomUUID
@@ -241,12 +266,21 @@ export async function apiSubmitApplication(payload: any): Promise<{
   // Also sync to Supabase PostgreSQL if configured
   if (isSupabaseConfigured && supabase) {
     try {
-      const { data: insertedApp, error: appErr } = await supabase
-        .from('job_applications')
-        .upsert(
-          {
+      let insertedApp: any = null;
+      let appErr: any = null;
+
+      // Retry up to 3 times with incremented sequence number if a concurrent submission collides on application_number
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const candidateAppNum =
+          attempt === 0
+            ? generatedAppNumber
+            : `DB-${year}-${String(nextSeqNum + attempt).padStart(6, '0')}`;
+
+        const res = await supabase
+          .from('job_applications')
+          .insert({
             id: appId,
-            application_number: generatedAppNumber,
+            application_number: candidateAppNum,
             full_name: payload.fullName.trim(),
             parent_name: payload.parentName.trim(),
             date_of_birth: payload.dateOfBirth,
@@ -275,28 +309,58 @@ export async function apiSubmitApplication(payload: any): Promise<{
             emergency_contact_relationship: payload.emergencyContactRelationship.trim(),
             emergency_contact_mobile: payload.emergencyContactMobile.trim(),
             status: 'SUBMITTED',
-          },
-          { onConflict: 'application_number' }
-        )
-        .select()
-        .single();
+          })
+          .select()
+          .single();
+
+        if (!res.error) {
+          insertedApp = res.data;
+          appErr = null;
+          generatedAppNumber = candidateAppNum;
+          break;
+        }
+
+        appErr = res.error;
+        // If duplicate key on application_number, increment and retry
+        if (res.error.code === '23505') {
+          nextSeqNum += Math.floor(Math.random() * 5) + 1;
+          continue;
+        } else {
+          break;
+        }
+      }
 
       const finalAppId = insertedApp?.id || appId;
       const finalAppNum = insertedApp?.application_number || generatedAppNumber;
 
       if (!appErr) {
         if (Array.isArray(payload.documents) && payload.documents.length > 0) {
-          await supabase.from('candidate_documents').insert(
-            payload.documents.map((doc: any) => ({
-              application_id: finalAppId,
-              document_type: doc.documentType,
-              file_name: doc.fileName,
-              storage_path: doc.storagePath,
-              mime_type: doc.mimeType || 'application/octet-stream',
-              file_data: doc.fileDataUrl || null,
-              verification_status: 'PENDING',
-            }))
-          );
+          // Insert lightweight metadata into candidate_documents (actual files live in Supabase Storage bucket 'candidate-kyc' or file_data fallback)
+          const docsPayload = payload.documents.map((doc: any) => ({
+            application_id: finalAppId,
+            document_type: doc.documentType,
+            file_name: doc.fileName,
+            storage_path: doc.storagePath,
+            mime_type: doc.mimeType || 'application/octet-stream',
+            file_data: doc.fileDataUrl || null,
+            verification_status: 'PENDING',
+          }));
+          const { error: docInsertErr } = await supabase
+            .from('candidate_documents')
+            .insert(docsPayload);
+
+          // Fallback if candidate_documents table does not have mime_type / file_data columns yet
+          if (docInsertErr) {
+            await supabase.from('candidate_documents').insert(
+              payload.documents.map((doc: any) => ({
+                application_id: finalAppId,
+                document_type: doc.documentType,
+                file_name: doc.fileName,
+                storage_path: doc.storagePath,
+                verification_status: 'PENDING',
+              }))
+            );
+          }
         }
 
         await supabase.from('application_activity_logs').insert({
@@ -439,7 +503,12 @@ export async function apiListApplications(token: string): Promise<any[]> {
         .order('created_at', { ascending: false });
 
       if (!error && apps) {
-        const { data: docs } = await supabase.from('candidate_documents').select('*');
+        // Select metadata columns only (exclude large base64 file_data) so list loading is fast
+        const { data: docs } = await supabase
+          .from('candidate_documents')
+          .select(
+            'id, application_id, document_type, file_name, storage_path, uploaded_at, verification_status, verified_by, verified_at, remarks'
+          );
         const docsByApp = new Map<string, any[]>();
         (docs || []).forEach((d: any) => {
           const list = docsByApp.get(d.application_id) || [];
@@ -498,7 +567,9 @@ export async function apiGetApplicationDetails(appId: string, token: string): Pr
       if (app) {
         const { data: docs } = await supabase
           .from('candidate_documents')
-          .select('*')
+          .select(
+            'id, application_id, document_type, file_name, storage_path, uploaded_at, verification_status, verified_by, verified_at, remarks'
+          )
           .eq('application_id', appId);
         const { data: logs } = await supabase
           .from('application_activity_logs')
@@ -708,17 +779,38 @@ export async function apiVerifyDocument(
 export async function apiViewDocument(doc: any, token: string): Promise<any | null> {
   if (isSupabaseConfigured && supabase) {
     try {
-      const cleanPath = String(doc.storagePath || '').replace(/^candidate-kyc\//, '');
-      const { data } = await supabase.storage
-        .from(KYC_STORAGE_BUCKET)
-        .createSignedUrl(cleanPath, 60);
-      if (data?.signedUrl) {
+      const rawPath = String(doc.storagePath || '');
+      const strippedPath = rawPath.replace(/^candidate-kyc\//, '');
+      // Try exact storagePath first, then strippedPath
+      for (const candidatePath of [rawPath, strippedPath]) {
+        if (!candidatePath) continue;
+        const { data } = await supabase.storage
+          .from(KYC_STORAGE_BUCKET)
+          .createSignedUrl(candidatePath, 300);
+        if (data?.signedUrl) {
+          return {
+            fileName: doc.fileName,
+            documentType: doc.documentType,
+            storagePath: doc.storagePath,
+            signedDataUrl: data.signedUrl,
+            expiresInSeconds: 300,
+          };
+        }
+      }
+
+      // Fallback: check if file_data was stored in candidate_documents table
+      const { data: docRow } = await supabase
+        .from('candidate_documents')
+        .select('file_data')
+        .eq('id', doc.id)
+        .single();
+      if (docRow?.file_data) {
         return {
           fileName: doc.fileName,
           documentType: doc.documentType,
           storagePath: doc.storagePath,
-          signedDataUrl: data.signedUrl,
-          expiresInSeconds: 60,
+          signedDataUrl: docRow.file_data,
+          expiresInSeconds: 300,
         };
       }
     } catch {
