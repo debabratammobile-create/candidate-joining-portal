@@ -1,14 +1,11 @@
 import React, { useState, useRef } from 'react';
 import { DOORBLY_POSITIONS, DOORBLY_LOGO_URL, JobPosition } from '../data/positions.ts';
-import { supabase, isSupabaseConfigured, KYC_STORAGE_BUCKET } from '../lib/supabase.ts';
 import { apiCheckDuplicate, apiSubmitApplication } from '../lib/recruitmentApi.ts';
 import heroDoorblyTeam from '../assets/images/hero_doorbly_team_1791344196731.jpg';
 import {
   ArrowRight,
   ArrowLeft,
   Check,
-  Upload,
-  FileText,
   X,
   Copy,
   Download,
@@ -18,15 +15,6 @@ import {
   AlertCircle,
   Menu,
 } from 'lucide-react';
-
-interface UploadedKycFile {
-  documentType: 'AADHAAR_FRONT' | 'AADHAAR_BACK' | 'EDUCATIONAL_CERTIFICATE' | 'BANK_PASSBOOK';
-  fileName: string;
-  fileSize: number;
-  mimeType: string;
-  fileDataUrl: string;
-  rawFile?: File;
-}
 
 interface ApplicationFormState {
   // Step 1: Personal Information
@@ -62,7 +50,7 @@ interface ApplicationFormState {
   emergencyContactRelationship: string;
   emergencyContactMobile: string;
 
-  // Step 5: Declaration
+  // Step 4: Declaration
   declarationAccepted: boolean;
 }
 
@@ -135,12 +123,6 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
     }
   }, [formData]);
 
-  // KYC Document files
-  const [aadhaarFront, setAadhaarFront] = useState<UploadedKycFile | null>(null);
-  const [aadhaarBack, setAadhaarBack] = useState<UploadedKycFile | null>(null);
-  const [eduCertificates, setEduCertificates] = useState<UploadedKycFile[]>([]);
-  const [bankPassbook, setBankPassbook] = useState<UploadedKycFile | null>(null);
-
   // Submission & validation state
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -181,49 +163,6 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
   ) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (formError) setFormError(null);
-  };
-
-  // Validate file size (max 5MB) and allowed format (PDF, JPG, JPEG, PNG) (#29)
-  const processFileUpload = (
-    file: File,
-    docType: UploadedKycFile['documentType'],
-    onSuccess: (uploaded: UploadedKycFile) => void
-  ) => {
-    setFormError(null);
-    const allowedMimeTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    const allowedExts = ['pdf', 'jpg', 'jpeg', 'png'];
-
-    if (!allowedMimeTypes.includes(file.type) && !allowedExts.includes(ext)) {
-      setFormError(
-        `Unsupported format for "${file.name}". Allowed formats: PDF, JPG, JPEG, PNG.`
-      );
-      return;
-    }
-
-    const maxBytes = 5 * 1024 * 1024; // 5 MB
-    if (file.size > maxBytes) {
-      setFormError(
-        `File "${file.name}" exceeds the 5 MB maximum limit (${(file.size / (1024 * 1024)).toFixed(2)} MB).`
-      );
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      onSuccess({
-        documentType: docType,
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type || (ext === 'pdf' ? 'application/pdf' : 'image/png'),
-        fileDataUrl: String(reader.result || ''),
-        rawFile: file,
-      });
-    };
-    reader.onerror = () => {
-      setFormError(`Could not read file "${file.name}". Please try again.`);
-    };
-    reader.readAsDataURL(file);
   };
 
   const validateCurrentStep = (step: number): boolean => {
@@ -335,23 +274,6 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
         return false;
       }
     } else if (step === 4) {
-      if (!aadhaarFront) {
-        setFormError('Please upload the Front Side of your Aadhaar Card.');
-        return false;
-      }
-      if (!aadhaarBack) {
-        setFormError('Please upload the Back Side of your Aadhaar Card.');
-        return false;
-      }
-      if (eduCertificates.length === 0) {
-        setFormError('Please upload at least one Educational Certificate.');
-        return false;
-      }
-      if (!bankPassbook) {
-        setFormError('Please upload the First Page of your Bank Passbook.');
-        return false;
-      }
-    } else if (step === 5) {
       if (!formData.declarationAccepted) {
         setFormError('You must accept the Applicant Declaration before proceeding.');
         return false;
@@ -384,7 +306,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
       }
     }
 
-    setCurrentStep((prev) => Math.min(prev + 1, 6));
+    setCurrentStep((prev) => Math.min(prev + 1, 5));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -395,7 +317,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
   };
 
   const handleSubmitApplication = async () => {
-    for (let s = 1; s <= 5; s++) {
+    for (let s = 1; s <= 4; s++) {
       if (!validateCurrentStep(s)) {
         setCurrentStep(s);
         return;
@@ -403,48 +325,14 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
     }
 
     setIsSubmitting(true);
-    setUploadProgress(15);
+    setUploadProgress(40);
     setFormError(null);
 
     try {
-      const allKycDocs: UploadedKycFile[] = [
-        aadhaarFront!,
-        aadhaarBack!,
-        ...eduCertificates,
-        bankPassbook!,
-      ];
-
-      setUploadProgress(35);
-
-      const preparedDocs = [];
-      const timestampFolder = `${Date.now()}_${formData.mobile.trim().slice(-4)}`;
-
-      for (let i = 0; i < allKycDocs.length; i++) {
-        const doc = allKycDocs[i];
-        const safeName = doc.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const storagePath = `candidate-kyc/${timestampFolder}/${doc.documentType}_${i + 1}_${safeName}`;
-
-        // Upload to private Supabase Storage bucket if external Supabase credentials are set
-        if (isSupabaseConfigured && supabase && doc.rawFile) {
-          await supabase.storage
-            .from(KYC_STORAGE_BUCKET)
-            .upload(storagePath, doc.rawFile, { upsert: false });
-        }
-
-        preparedDocs.push({
-          documentType: doc.documentType,
-          fileName: doc.fileName,
-          storagePath,
-          fileDataUrl: doc.fileDataUrl,
-          mimeType: doc.mimeType,
-        });
-
-        setUploadProgress(35 + Math.round(((i + 1) / allKycDocs.length) * 40));
-      }
-
+      setUploadProgress(75);
       const data = await apiSubmitApplication({
         ...formData,
-        documents: preparedDocs,
+        documents: [],
       });
 
       setUploadProgress(100);
@@ -457,7 +345,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
       setViewMode('submitted');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err: any) {
-      setFormError(err.message || 'Network or upload error occurred. Please try again.');
+      setFormError(err.message || 'Submission error occurred. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -669,7 +557,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                     Join Doorbly and Build Your Career
                   </h1>
                   <p className="text-sm sm:text-base lg:text-lg text-slate-300 max-w-2xl leading-relaxed">
-                    Choose your position, complete your application and submit your documents for verification. We are expanding district operations across high-growth service hubs.
+                    Choose your position and complete your application. We are expanding district operations across high-growth service hubs.
                   </p>
                   <div className="pt-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
                     <button
@@ -703,7 +591,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                     </div>
                     <div>
                       <div className="text-base sm:text-xl font-bold font-mono tabular-nums text-white">100% Private</div>
-                      <div className="text-[11px] sm:text-xs text-slate-400 mt-0.5">Encrypted KYC</div>
+                      <div className="text-[11px] sm:text-xs text-slate-400 mt-0.5">Verified Profile</div>
                     </div>
                   </div>
                 </div>
@@ -861,25 +749,25 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
 
                   <div className="border-t-2 border-slate-300 pt-4">
                     <div className="text-xs font-mono font-semibold text-slate-600 mb-1">
-                      02. Complete 6-Step Form
+                      02. Fill Application Details
                     </div>
                     <h3 className="text-base font-bold text-slate-900">
                       Personal, Experience &amp; Education
                     </h3>
                     <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                      Enter your personal details, district location, work history, qualifications, and emergency contact details in our guided multi-step form.
+                      Enter your personal details, district location, work history, qualifications, and emergency contact details in our guided form.
                     </p>
                   </div>
 
                   <div className="border-t-2 border-slate-300 pt-4">
                     <div className="text-xs font-mono font-semibold text-slate-600 mb-1">
-                      03. Private KYC Upload
+                      03. Review &amp; Declaration
                     </div>
                     <h3 className="text-base font-bold text-slate-900">
-                      Submit Verification Documents
+                      Confirm Application Details
                     </h3>
                     <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                      Upload clear copies of your Aadhaar Card (Front &amp; Back), Educational Certificates, and Bank Passbook first page into our private vault.
+                      Verify all your entered profile details and confirm the candidate declaration before final submission.
                     </p>
                   </div>
 
@@ -891,7 +779,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                       HR Review &amp; Onboarding
                     </h3>
                     <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                      Receive your unique Application ID (e.g., DB-2026-000001) immediately upon submission while our HR &amp; Admin team verifies your profile.
+                      Receive your unique Application ID (e.g., DB-2026-000001) immediately upon submission while our HR &amp; Admin team reviews your profile.
                     </p>
                   </div>
                 </div>
@@ -1075,16 +963,15 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
               </div>
             </div>
 
-            {/* Progress Indicator: 1 -> 2 -> 3 -> 4 -> 5 -> 6 (#27) */}
+            {/* Progress Indicator: 1 -> 2 -> 3 -> 4 -> 5 */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 mb-5">
               <div className="flex items-center justify-between gap-1 sm:gap-2">
                 {[
                   { step: 1, title: 'Personal Info' },
                   { step: 2, title: 'Position & Experience' },
                   { step: 3, title: 'Education & Skills' },
-                  { step: 4, title: 'KYC Documents' },
-                  { step: 5, title: 'Review & Declaration' },
-                  { step: 6, title: 'Submit' },
+                  { step: 4, title: 'Review & Declaration' },
+                  { step: 5, title: 'Submit' },
                 ].map((item, idx, arr) => {
                   const isActive = currentStep === item.step;
                   const isCompleted = currentStep > item.step;
@@ -1137,7 +1024,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
               </div>
               <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-center justify-between lg:hidden text-xs">
                 <span className="font-mono font-semibold text-teal-700">
-                  Step {currentStep} of 6
+                  Step {currentStep} of 5
                 </span>
                 <span className="font-semibold text-slate-800">
                   {
@@ -1145,7 +1032,6 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                       'Personal Information',
                       'Position & Work Experience',
                       'Education, Skills & Emergency Contact',
-                      'KYC Verification Documents',
                       'Review & Declaration',
                       'Final Submission',
                     ][currentStep - 1]
@@ -1169,7 +1055,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                 <div className="space-y-6">
                   <div className="border-b border-slate-200 pb-4">
                     <div className="text-xs font-mono text-teal-700 font-semibold">
-                      Step 1 of 6
+                      Step 1 of 5
                     </div>
                     <h2 className="text-xl font-bold text-slate-900 mt-0.5">
                       Personal Information
@@ -1342,7 +1228,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                 <div className="space-y-6">
                   <div className="border-b border-slate-200 pb-4">
                     <div className="text-xs font-mono text-teal-700 font-semibold">
-                      Step 2 of 6
+                      Step 2 of 5
                     </div>
                     <h2 className="text-xl font-bold text-slate-900 mt-0.5">
                       Position &amp; Work Experience
@@ -1474,7 +1360,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                 <div className="space-y-6">
                   <div className="border-b border-slate-200 pb-4">
                     <div className="text-xs font-mono text-teal-700 font-semibold">
-                      Step 3 of 6
+                      Step 3 of 5
                     </div>
                     <h2 className="text-xl font-bold text-slate-900 mt-0.5">
                       Educational Information, Skills &amp; Emergency Contact
@@ -1614,248 +1500,12 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                 </div>
               )}
 
-              {/* STEP 4: KYC DOCUMENT UPLOAD (#7, #8) */}
+              {/* STEP 4: REVIEW & DECLARATION */}
               {currentStep === 4 && (
                 <div className="space-y-6">
                   <div className="border-b border-slate-200 pb-4">
                     <div className="text-xs font-mono text-teal-700 font-semibold">
-                      Step 4 of 6
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-900 mt-0.5">
-                      KYC Verification Documents
-                    </h2>
-                    <p className="text-xs sm:text-sm text-slate-700 font-medium mt-1">
-                      Your documents are required for identity and employment verification. Please upload clear and valid copies.
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Allowed formats: PDF, JPG, JPEG, PNG · Maximum file size: 5 MB per document.
-                    </p>
-                  </div>
-
-                  {/* 1. Aadhaar Card Front & Back */}
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-bold text-slate-900">
-                      1. Aadhaar Card (Front &amp; Back Required) *
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Front Side */}
-                      <div className="border border-slate-300 border-dashed rounded-xl p-4 bg-slate-50/70">
-                        <div className="text-xs font-semibold text-slate-800 mb-1">
-                          Aadhaar Card — Front Side *
-                        </div>
-                        <p className="text-xs text-slate-500 mb-3">
-                          Must clearly show Full Name, Date of Birth, Gender &amp; Photo
-                        </p>
-                        {aadhaarFront ? (
-                          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <FileText className="w-4 h-4 text-teal-700 shrink-0" />
-                              <span className="text-xs font-medium text-slate-800 truncate">
-                                {aadhaarFront.fileName}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setAadhaarFront(null)}
-                              className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
-                              title="Remove file"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-300 hover:border-teal-700 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer transition-colors">
-                            <Upload className="w-3.5 h-3.5 text-teal-700" />
-                            <span>Select Front Side (PDF/JPG/PNG)</span>
-                            <input
-                              type="file"
-                              accept=".pdf,.jpg,.jpeg,.png"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  processFileUpload(file, 'AADHAAR_FRONT', (uploaded) =>
-                                    setAadhaarFront(uploaded)
-                                  );
-                                }
-                              }}
-                            />
-                          </label>
-                        )}
-                      </div>
-
-                      {/* Back Side */}
-                      <div className="border border-slate-300 border-dashed rounded-xl p-4 bg-slate-50/70">
-                        <div className="text-xs font-semibold text-slate-800 mb-1">
-                          Aadhaar Card — Back Side *
-                        </div>
-                        <p className="text-xs text-slate-500 mb-3">
-                          Must clearly show Residential Address &amp; PIN Code
-                        </p>
-                        {aadhaarBack ? (
-                          <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <FileText className="w-4 h-4 text-teal-700 shrink-0" />
-                              <span className="text-xs font-medium text-slate-800 truncate">
-                                {aadhaarBack.fileName}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setAadhaarBack(null)}
-                              className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
-                              title="Remove file"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-300 hover:border-teal-700 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer transition-colors">
-                            <Upload className="w-3.5 h-3.5 text-teal-700" />
-                            <span>Select Back Side (PDF/JPG/PNG)</span>
-                            <input
-                              type="file"
-                              accept=".pdf,.jpg,.jpeg,.png"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  processFileUpload(file, 'AADHAAR_BACK', (uploaded) =>
-                                    setAadhaarBack(uploaded)
-                                  );
-                                }
-                              }}
-                            />
-                          </label>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 2. Educational Certificates (Multiple Allowed) */}
-                  <div className="space-y-3 pt-4 border-t border-slate-200">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <h3 className="text-sm font-bold text-slate-900">
-                          2. Educational Certificates (Multiple uploads allowed) *
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Upload 10th, 12th, Graduation, Diploma or other relevant certificates.
-                        </p>
-                      </div>
-                      <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-300 hover:border-teal-700 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer transition-colors self-start">
-                        <Upload className="w-3.5 h-3.5 text-teal-700" />
-                        <span>Add Certificate</span>
-                        <input
-                          type="file"
-                          multiple
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          className="hidden"
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files || []);
-                            files.forEach((file) => {
-                              processFileUpload(
-                                file,
-                                'EDUCATIONAL_CERTIFICATE',
-                                (uploaded) => {
-                                  setEduCertificates((prev) => [...prev, uploaded]);
-                                }
-                              );
-                            });
-                          }}
-                        />
-                      </label>
-                    </div>
-
-                    {eduCertificates.length > 0 ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        {eduCertificates.map((cert, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg p-2.5"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <FileText className="w-4 h-4 text-teal-700 shrink-0" />
-                              <span className="text-xs font-medium text-slate-800 truncate">
-                                {cert.fileName}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setEduCertificates((prev) =>
-                                  prev.filter((_, i) => i !== idx)
-                                )
-                              }
-                              className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 border-dashed rounded-lg p-4 text-center">
-                        No educational certificates uploaded yet. Click &ldquo;Add Certificate&rdquo; above.
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 3. Bank Passbook First Page */}
-                  <div className="space-y-3 pt-4 border-t border-slate-200">
-                    <h3 className="text-sm font-bold text-slate-900">
-                      3. First Page of Bank Passbook *
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Must clearly show: Account holder name, Bank name, Account number, and IFSC code. Sensitive bank details are encrypted and never displayed publicly.
-                    </p>
-                    <div className="border border-slate-300 border-dashed rounded-xl p-4 bg-slate-50/70">
-                      {bankPassbook ? (
-                        <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="w-4 h-4 text-teal-700 shrink-0" />
-                            <span className="text-xs font-medium text-slate-800 truncate">
-                              {bankPassbook.fileName}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setBankPassbook(null)}
-                            className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-300 hover:border-teal-700 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer transition-colors">
-                          <Upload className="w-3.5 h-3.5 text-teal-700" />
-                          <span>Upload Bank Passbook First Page (PDF/JPG/PNG)</span>
-                          <input
-                            type="file"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                processFileUpload(file, 'BANK_PASSBOOK', (uploaded) =>
-                                  setBankPassbook(uploaded)
-                                );
-                              }
-                            }}
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 5: REVIEW & DECLARATION (#9) */}
-              {currentStep === 5 && (
-                <div className="space-y-6">
-                  <div className="border-b border-slate-200 pb-4">
-                    <div className="text-xs font-mono text-teal-700 font-semibold">
-                      Step 5 of 6
+                      Step 4 of 5
                     </div>
                     <h2 className="text-xl font-bold text-slate-900 mt-0.5">
                       Review Application &amp; Declaration
@@ -1900,7 +1550,7 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
 
                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                       <div className="font-bold text-slate-900 text-sm mb-2">
-                        Position, Education &amp; KYC Files
+                        Position &amp; Education Summary
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-500">Applied Position:</span>
@@ -1927,21 +1577,21 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-500">KYC Documents Attached:</span>
-                        <span className="font-mono font-semibold text-emerald-700">
-                          {2 + eduCertificates.length + 1} Validated Files
+                        <span className="text-slate-500">Emergency Contact:</span>
+                        <span className="font-medium text-slate-800">
+                          {formData.emergencyContactName} ({formData.emergencyContactRelationship})
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Applicant Declaration Box (#9) */}
+                  {/* Applicant Declaration Box */}
                   <div className="p-5 bg-slate-50 border border-slate-300 rounded-xl space-y-4">
                     <h3 className="text-sm font-bold text-slate-900">
                       Applicant Declaration
                     </h3>
                     <p className="text-xs sm:text-sm text-slate-700 leading-relaxed italic">
-                      &ldquo;I confirm that the information and documents submitted by me are true and accurate to the best of my knowledge. I authorize Doorbly to use the submitted information and documents for recruitment, identity verification and employment-related purposes.&rdquo;
+                      &ldquo;I confirm that the information submitted by me is true and accurate to the best of my knowledge. I authorize Doorbly to use the submitted information for recruitment, identity verification and employment-related purposes.&rdquo;
                     </p>
                     <label className="flex items-start gap-3 cursor-pointer select-none pt-1">
                       <input
@@ -1953,35 +1603,35 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                         className="mt-0.5 w-4 h-4 accent-teal-700 rounded cursor-pointer"
                       />
                       <span className="text-xs sm:text-sm font-semibold text-slate-900">
-                        I agree to the above declaration and authorize Doorbly to verify my submitted information and documents.
+                        I agree to the above declaration and authorize Doorbly to verify my submitted information.
                       </span>
                     </label>
                   </div>
                 </div>
               )}
 
-              {/* STEP 6: FINAL SUBMIT STEP (#10, #27) */}
-              {currentStep === 6 && (
+              {/* STEP 5: FINAL SUBMIT STEP */}
+              {currentStep === 5 && (
                 <div className="space-y-6 text-center py-4">
                   <div className="w-12 h-12 rounded-full bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center mx-auto">
                     <ShieldCheck className="w-6 h-6" />
                   </div>
                   <div>
                     <div className="text-xs font-mono text-teal-700 font-semibold">
-                      Step 6 of 6 · Final Submission
+                      Step 5 of 5 · Final Submission
                     </div>
                     <h2 className="text-2xl font-bold text-slate-900 mt-1">
                       Ready to Submit Your Application
                     </h2>
                     <p className="text-sm text-slate-600 max-w-lg mx-auto mt-2">
-                      You are applying for <strong>{formData.appliedPosition}</strong> ({formData.preferredLocation}). Your KYC documents will be encrypted and uploaded to our private verification vault.
+                      You are applying for <strong>{formData.appliedPosition}</strong> ({formData.preferredLocation}). Your application details will be sent directly to our recruitment team.
                     </p>
                   </div>
 
                   {isSubmitting && (
                     <div className="max-w-md mx-auto space-y-2 pt-2">
                       <div className="flex justify-between text-xs font-mono text-slate-600">
-                        <span>Uploading KYC Documents &amp; Creating Record...</span>
+                        <span>Submitting Application &amp; Creating Record...</span>
                         <span>{uploadProgress}%</span>
                       </div>
                       <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
@@ -2019,8 +1669,8 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                 </div>
               )}
 
-              {/* Step Navigation Footer (for Steps 1-5) */}
-              {currentStep < 6 && (
+              {/* Step Navigation Footer (for Steps 1-4) */}
+              {currentStep < 5 && (
                 <div className="mt-8 pt-6 border-t border-slate-200 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
                   <button
                     type="button"
@@ -2037,16 +1687,16 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
 
                   <button
                     type="button"
-                    disabled={currentStep === 5 && !formData.declarationAccepted}
+                    disabled={currentStep === 4 && !formData.declarationAccepted}
                     onClick={handleNextStep}
                     className={`min-h-[44px] px-6 py-2.5 text-xs font-semibold text-white rounded-lg transition-colors inline-flex items-center justify-center gap-1.5 ${
-                      currentStep === 5 && !formData.declarationAccepted
+                      currentStep === 4 && !formData.declarationAccepted
                         ? 'bg-slate-300 cursor-not-allowed'
                         : 'bg-slate-900 hover:bg-teal-700 cursor-pointer'
                     }`}
                   >
                     <span>
-                      {currentStep === 5 ? 'Proceed to Final Submit' : 'Save & Continue'}
+                      {currentStep === 4 ? 'Proceed to Final Submit' : 'Save & Continue'}
                     </span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
@@ -2126,10 +1776,6 @@ export const ApplicantPortal: React.FC<ApplicantPortalProps> = ({ onNavigateToAd
                       ...INITIAL_FORM_STATE,
                       appliedPosition: DOORBLY_POSITIONS[0].title,
                     });
-                    setAadhaarFront(null);
-                    setAadhaarBack(null);
-                    setEduCertificates([]);
-                    setBankPassbook(null);
                     setViewMode('landing');
                   }}
                   className="text-xs font-medium text-slate-600 hover:text-slate-900 underline underline-offset-4 cursor-pointer py-1"

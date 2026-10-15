@@ -1716,80 +1716,86 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateToAppl
                       </span>
                     </div>
 
-                    <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg">
-                      {(activeApplicant.documents || []).map((doc) => (
-                        <div
-                          key={doc.id}
-                          className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-slate-900">
-                                {doc.documentType}
-                              </span>
-                              <span>·</span>
-                              <span
-                                className={`font-semibold ${
-                                  doc.verificationStatus === 'VERIFIED'
-                                    ? 'text-emerald-700'
-                                    : doc.verificationStatus === 'REJECTED'
-                                    ? 'text-rose-700'
-                                    : 'text-amber-700'
-                                }`}
-                              >
-                                {doc.verificationStatus}
-                              </span>
-                            </div>
-                            <div className="text-slate-600 font-mono text-xs">
-                              {doc.fileName}
-                            </div>
-                            {doc.remarks && (
-                              <div className="text-slate-500 italic">
-                                Note: {doc.remarks}
+                    {activeApplicant.documents && activeApplicant.documents.length > 0 ? (
+                      <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg">
+                        {activeApplicant.documents.map((doc) => (
+                          <div
+                            key={doc.id}
+                            className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-slate-900">
+                                  {doc.documentType}
+                                </span>
+                                <span>·</span>
+                                <span
+                                  className={`font-semibold ${
+                                    doc.verificationStatus === 'VERIFIED'
+                                      ? 'text-emerald-700'
+                                      : doc.verificationStatus === 'REJECTED'
+                                      ? 'text-rose-700'
+                                      : 'text-amber-700'
+                                  }`}
+                                >
+                                  {doc.verificationStatus}
+                                </span>
                               </div>
-                            )}
+                              <div className="text-slate-600 font-mono text-xs">
+                                {doc.fileName}
+                              </div>
+                              {doc.remarks && (
+                                <div className="text-slate-500 italic">
+                                  Note: {doc.remarks}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleSecureViewDocument(doc)}
+                                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-teal-700" />
+                                <span>View</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleDocumentVerification(
+                                    doc.id,
+                                    'VERIFIED',
+                                    'Document verified by administrator'
+                                  )
+                                }
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Verify</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRejectingDocId(doc.id);
+                                  setDocRejectReason('Document is unclear');
+                                }}
+                                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Reject</span>
+                              </button>
+                            </div>
                           </div>
-
-                          <div className="flex flex-wrap items-center gap-2 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleSecureViewDocument(doc)}
-                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-teal-700" />
-                              <span>View</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleDocumentVerification(
-                                  doc.id,
-                                  'VERIFIED',
-                                  'Document verified by administrator'
-                                )
-                              }
-                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Verify</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRejectingDocId(doc.id);
-                                setDocRejectReason('Document is unclear');
-                              }}
-                              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                              <span>Reject</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3.5">
+                        No documents required or uploaded for this application. Profile details are submitted directly.
+                      </div>
+                    )}
 
                     {/* Inline Document Rejection Reason Prompt (#17) */}
                     {rejectingDocId && (

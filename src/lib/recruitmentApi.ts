@@ -486,7 +486,7 @@ export async function apiListApplications(token: string): Promise<any[]> {
     const data = await safeParseJson(res);
     if (res.ok && data && Array.isArray(data.applications)) {
       for (const app of data.applications) {
-        const key = app.applicationNumber || app.id;
+        const key = app.id || app.applicationNumber;
         if (key) mergedMap.set(key, app);
       }
     }
@@ -518,8 +518,15 @@ export async function apiListApplications(token: string): Promise<any[]> {
 
         for (const a of apps) {
           const mapped = mapSupabaseAppToRecord(a, docsByApp.get(a.id) || []);
-          const key = mapped.applicationNumber || mapped.id;
-          if (key && !mergedMap.has(key)) {
+          const key = mapped.id || mapped.applicationNumber;
+          const existingByMobile = Array.from(mergedMap.values()).find(
+            (m) =>
+              m.mobile &&
+              mapped.mobile &&
+              m.mobile.trim() === mapped.mobile.trim() &&
+              m.appliedPosition === mapped.appliedPosition
+          );
+          if (key && !mergedMap.has(key) && !existingByMobile) {
             mergedMap.set(key, mapped);
           }
         }
@@ -532,8 +539,15 @@ export async function apiListApplications(token: string): Promise<any[]> {
   // 3) Include any browser local fallback applications
   const localApps = getLocalApplications();
   for (const loc of localApps) {
-    const key = loc.applicationNumber || loc.id;
-    if (key && !mergedMap.has(key)) {
+    const key = loc.id || loc.applicationNumber;
+    const existingByMobile = Array.from(mergedMap.values()).find(
+      (m) =>
+        m.mobile &&
+        loc.mobile &&
+        m.mobile.trim() === loc.mobile.trim() &&
+        m.appliedPosition === loc.appliedPosition
+    );
+    if (key && !mergedMap.has(key) && !existingByMobile) {
       mergedMap.set(key, loc);
     }
   }
